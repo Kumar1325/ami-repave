@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  RHELCurrentAMI:
+    Type: String
+    Description: RHEL Current AMI Id
+    AllowedPattern: ^[a-zA-Z0-9]*$
+  RHELPreviousAMI:
+    Type: String
+    Description: RHEL Previous AMI Id
+  EKSCurrentAMI:
+    Type: String
+    Description: EKS Current AMI Id
+  EKSPreviousAMI:
+    Type: String
+    Description: EKS Previous AMI Id
+  LustreCurrentAMI:
+    Type: String
+    Description: Lustre Current AMI Id
+  EKSPreviousAMI:
+    Type: String
+    Description: Lustre Previous AMI Id
+  ForensicCurrentAMI:
+    Type: String
+    Description: Forensic Current AMI Id
+  ForensicPreviousAMI:
+    Type: String
+    Description: Forensic Previous AMI Id
+  ReleaseDateRHELCurrentAMI:
+    Type: String
+    Description: ReleaseDate of RHEL Current AMI Id
+  ReleaseDateRHELPreviousAMI:
+    Type: String
+    Description: ReleaseDate of RHEL Previous AMI Id
+  ReleaseDateEKSCurrentAMI:
+    Type: String
+    Description: ReleaseDate of EKS Current AMI Id
+  ReleaseDateEKSPreviousAMI:
+    Type: String
+    Description: ReleaseDate of EKS Previous AMI Id
+  ReleaseDateLustreCurrentAMI:
+    Type: String
+    Description: ReleaseDate of Lustre Current AMI Id
+  ReleaseDateEKSPreviousAMI:
+    Type: String
+    Description: ReleaseDate of Lustre Previous AMI Id
+  ReleaseDateForensicCurrentAMI:
+    Type: String
+    Description: ReleaseDate of Forensic Current AMI Id
+  ReleaseDateForensicPreviousAMI:
+    Type: String
+    Description: ReleaseDate of Forensic Previous AMI Id
