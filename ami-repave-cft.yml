@@ -3,49 +3,105 @@ Parameters:
   RHELCurrentAMI:
     Type: String
     Description: RHEL Current AMI Id
-    AllowedPattern: ^[a-zA-Z0-9]*$
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   RHELPreviousAMI:
     Type: String
     Description: RHEL Previous AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   EKSCurrentAMI:
     Type: String
     Description: EKS Current AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   EKSPreviousAMI:
     Type: String
     Description: EKS Previous AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   LustreCurrentAMI:
     Type: String
     Description: Lustre Current AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   EKSPreviousAMI:
     Type: String
     Description: Lustre Previous AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   ForensicCurrentAMI:
     Type: String
     Description: Forensic Current AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   ForensicPreviousAMI:
     Type: String
     Description: Forensic Previous AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-03dd1011b2501fbfd
   ReleaseDateRHELCurrentAMI:
     Type: String
-    Description: ReleaseDate of RHEL Current AMI Id
+    Description: ReleaseDate of RHEL Current AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateRHELPreviousAMI:
     Type: String
-    Description: ReleaseDate of RHEL Previous AMI Id
+    Description: ReleaseDate of RHEL Previous AMI Id,, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateEKSCurrentAMI:
     Type: String
-    Description: ReleaseDate of EKS Current AMI Id
+    Description: ReleaseDate of EKS Current AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateEKSPreviousAMI:
     Type: String
-    Description: ReleaseDate of EKS Previous AMI Id
+    Description: ReleaseDate of EKS Previous AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateLustreCurrentAMI:
     Type: String
-    Description: ReleaseDate of Lustre Current AMI Id
+    Description: ReleaseDate of Lustre Current AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateEKSPreviousAMI:
     Type: String
-    Description: ReleaseDate of Lustre Previous AMI Id
+    Description: ReleaseDate of Lustre Previous AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateForensicCurrentAMI:
     Type: String
-    Description: ReleaseDate of Forensic Current AMI Id
+    Description: ReleaseDate of Forensic Current AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
   ReleaseDateForensicPreviousAMI:
     Type: String
-    Description: ReleaseDate of Forensic Previous AMI Id
+    Description: ReleaseDate of Forensic Previous AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
+  VisibilityTimeout:
+    Description: This should be longer than the time it would take to process and delete a message, this should not exceed 12 hours
+    Type: Number
+    Default: 60
+
+Resources:
+  RHELCurrentAMIParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      DataType: aws:ec2:image
+      Description: RHEL Current AMI ID
+      AllowedPattern: "^ami-[a-z0-9]{17}$"
+      Name: /cti/ami/ami-ids/rhel-current
+      Type: String
+      Value: 
+        Ref: RHELCurrentAMI
+  RHELCurrentAMIReleaseDateParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RHEL Current AMI ID
+      AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+      Name: /cti/ami/release-dates/rhel-current
+      Type: String
+      Value: 
+        Ref: ReleaseDateRHELCurrentAMI
