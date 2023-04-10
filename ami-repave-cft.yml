@@ -43,42 +43,42 @@ Parameters:
   ReleaseDateRHELCurrentAMI:
     Type: String
     Description: ReleaseDate of RHEL Current AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateRHELPreviousAMI:
     Type: String
     Description: ReleaseDate of RHEL Previous AMI Id,, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateEKSCurrentAMI:
     Type: String
     Description: ReleaseDate of EKS Current AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateEKSPreviousAMI:
     Type: String
     Description: ReleaseDate of EKS Previous AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateLustreCurrentAMI:
     Type: String
     Description: ReleaseDate of Lustre Current AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateEKSPreviousAMI:
     Type: String
     Description: ReleaseDate of Lustre Previous AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateForensicCurrentAMI:
     Type: String
     Description: ReleaseDate of Forensic Current AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   ReleaseDateForensicPreviousAMI:
     Type: String
     Description: ReleaseDate of Forensic Previous AMI Id, allowed pattern YYYY-MM-DD.
-    AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
     Default: "2023-04-07"
   VisibilityTimeout:
     Description: This should be longer than the time it would take to process and delete a message, this should not exceed 12 hours
@@ -100,7 +100,7 @@ Resources:
     Type: AWS::SSM::Parameter
     Properties:
       Description: RHEL Current AMI ID
-      AllowedPattern: "^20[2-4][0-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+      AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
       Name: /cti/ami/release-dates/rhel-current
       Type: String
       Value: 
