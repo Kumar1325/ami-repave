@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  VisibilityTimeout:
+    Description: This should be longer than the time it would take to process and delete a message, this should not exceed 12 hours
+    Type: Number
+    Default: 900
+  AMIRepaveKMSKeyName:
+    Type: String
+    Description: KMS Key to encrypt Lambda Environment variables, SQS Messages.
+    Default: AMIRepaveEncryptionKey
+  AMIRepaveSQSName:
+    Type: String
+    Description: Lambda sends/receives messages of ASGNames to Queue
+    Default: AMIRepaveLambdaQueue
+  AMIRepaveDLQName:
+    Type: String
+    Description: DLQ for Lambda Queue
+    Default: AMIRepaveLambdaQueue-DLQ
+
+Resources:
+  AMIRepaveKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: AMI Repave Encryption CMK
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy: 
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          Action: 'kms:*'
+          Resource: '*'
+        - Sid: Enable AWS Services Access
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - sqs.amazonaws.com
+          Action:
+          - kms:Encrypt
+          - kms:Decrypt
+          - kms:ReEncrypt*
+          - kms:GenerateDateKey*
+          - kms:GenerateDataKeyWithoutPlainText
+          - kms:DescribeKey
+          Resource: "*"
+  AMIRepaveKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${AMIRepaveKMSKeyName}"
+      TargetKeyId: !Ref AMIRepaveKMSKey
+
+  RepaveSqs:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AMIRepaveKMSKey
+      QueueName: !Ref AMIRepaveSQSName
+      VisibilityTimeout: 
+        Ref: VisibilityTimeout
+  RepaveDlqSqs:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AMIRepaveKMSKey
+      QueueName: !Ref AMIRepaveDLQName
+      RedriveAllowPolicy: 
+        redrivePermission: byQueue
+        sourceQueueArns: 
+        - !GetAtt RepaveSqs.Arn

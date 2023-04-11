@@ -83,7 +83,19 @@ Parameters:
   VisibilityTimeout:
     Description: This should be longer than the time it would take to process and delete a message, this should not exceed 12 hours
     Type: Number
-    Default: 60
+    Default: 900
+  AMIRepaveKMSKeyName:
+    Type: String
+    Description: KMS Key to encrypt Lambda Environment variables, SQS Messages.
+    Default: AMIRepaveEncryptionKey
+  AMIRepaveSQSName:
+    Type: String
+    Description: Lambda sends/receives messages of ASGNames to Queue
+    Default: AMIRepaveLambdaQueue
+  AMIRepaveDLQName:
+    Type: String
+    Description: DLQ for Lambda Queue
+    Default: AMIRepaveLambdaQueue-DLQ
 
 Resources:
   RHELCurrentAMIParameter:
@@ -105,3 +117,381 @@ Resources:
       Type: String
       Value: 
         Ref: ReleaseDateRHELCurrentAMI
+  AMIRepaveKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: AMI Repave Encryption CMK
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy: 
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+          Action: 'kms:*'
+          Resource: '*'
+        - Sid: Enable AWS Services Access
+          Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+            - sqs.amazonaws.com
+          Action:
+          - kms:Encrypt
+          - kms:Decrypt
+          - kms:ReEncrypt*
+          - kms:GenerateDateKey*
+          - kms:GenerateDataKeyWithoutPlainText
+          - kms:DescribeKey
+          Resource: "*"
+  AMIRepaveKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${AMIRepaveKMSKeyName}"
+      TargetKeyId: !Ref AMIRepaveKMSKey
+  RepaveSqs:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AMIRepaveKMSKey
+      QueueName: !Ref AMIRepaveSQSName
+      VisibilityTimeout: !Ref VisibilityTimeout
+      RedrivePolicy: 
+        deadLetterTargetArn: !GetAtt RepaveDlqSqs.Arn
+        maxReceiveCount: 5 
+  RepaveDlqSqs:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AMIRepaveKMSKey
+      QueueName: !Ref AMIRepaveDLQName
+      VisibilityTimeout: 
+        Ref: VisibilityTimeout
+  LambdaScheduler:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      ScheduleExpression: "cron(0 22 * * ? *)"
+      State: ENABLED
+      Targets:
+      - Arn: !GetAtt RepaveLambda.Arn
+        Id: RepaveLambdaRule
+  InvokeLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt RepaveLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaScheduler.Arn
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      Enabled: true
+      EventSourceArn: !GetAtt RepaveSqs.Arn
+      FunctionName: !GetAtt RepaveLambda.Arn
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AMIRepaveLambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              Resource: arn:aws:logs:*:*:*
+        - PolicyName: allowSSMActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - ssm:GetParametersByPath
+              - ssm:GetParameter
+              Resource: 
+              - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/cti/*'
+        - PolicyName: allowASGActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - autoscaling:DescribeAutoScalingGroups
+              - autoscaling:DescribeTags
+              Resource: '*'
+        - PolicyName: allowEC2InstanceActions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - ec2:DescribeIntances
+              - ec2:TerminateInstance
+              Resource: '*'
+        - PolicyName: allowSqs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - sqs:ReceiveMessage
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:ChangeMessageVisibility
+              Resource: 
+              - !GetAtt RepaveSqs.Arn
+              - !GetAtt RepaveDlqSqs.Arn
+  RepaveLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: 
+        ZipFile: |
+          from math import ceil
+          from os import environ
+          from datetime import datetime
+          import logging
+          import json
+          from botocore.exceptions import ClientError
+          import boto3
+          LOGGER = logging.getLogger(__name__)
+          LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
+          def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
+              client = boto3.client("ssm")
+              response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption)
+              return response["Parameters"]
+          def send_message_to_queue(queue_url, body):
+              client = boto3.client("sqs")
+              client.send_message_to_queue(QueueUrl=queue_url, MessageBody=body)
+          def delete_message_from_queue(queue_url, receipt_handle):
+              client = boto3.client("sqs")
+              client.detete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+          def terminate_instances(instance_ids):
+              client = boto3.client("ec2")
+              LOGGER.info("Terminating the following instances: %s",instance_ids)
+              client.terminate_instances(InstanceIds=instance_ids)
+          def get_asgs(asg_name=[]):
+              client = boto3.client("autoscaling")
+              all_asgs = []
+              response = client.describe_auto_scaling_groups(AutoScalingGroupNames=asg_name)
+              while True:
+                  all_asgs.extend(response["AutoScalingGroups"])
+                  if "NextToken" in response:
+                      response = client.describe_auto_scaling_groups(NextToken=response["NextToken"])
+                      all_asgs.extend(response["AutoScalingGroups"])
+                  else:
+                      break
+              return all_asgs
+          def is_lt_uses_ssm_parameter(lt_id, version):
+              client = boto3.client("ec2")
+              response = client.describe_launch_template_versions(LaunchTemplateId=lt_id, Versions=[version])
+              if ("resolve:ssm:"in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
+                  return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]
+          def get_asg_instances(asg_name):
+              client = boto3.client("autoscaling")
+              asg_instance_ids = []
+              response = client.describe_auto_scaling_instances()
+              while True:
+                  asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                  if "NextToken" in response:
+                      response = client.describe_auto_scaling_instances(NextToken=response["NextToken"])
+                      asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                  else:
+                      break
+              return asg_instance_ids
+          def get_asg_instances_to_terminate(instance_ids, ami_id):
+              client = boto3.client("ec2")
+              response = client.describe_instances(InstanceIds=instance_ids)
+              instances_to_terminate = [instance["InstanceId"] for instance in response["Reservations"][0]["Instances"] if instance["ImageId"] != ami_id]
+              return instances_to_terminate
+          def lambda_handler(event, context):
+              try:
+                  LOGGER.info("Received Event: %s", event)
+                  grace_days = environ.get("GracePeriodDays", 45)
+                  staggered_deploy = environ.get("StaggeredDeploymentPercentage", 33)
+                  queue_url = environ.get("AsgSqsQueueUrl")
+                  if ("source" in event) and (event["source"] == "aws.events"):
+                      ami_ids_path = environ.get("CitiAmiIdPath", "/cti/base/ami-ids/")
+                      ami_ids_info = get_ssm_parameters_by_path(ami_ids_path)
+                      parameter_name_ami_id_map = {}
+                      for ami in ami_ids_info:
+                          ami_release_date = ami["LastModifiedDate"]
+                          delta = datetime.utcnow() - ami_release_date.replace(tzinfo=None)
+                          if delta.days >= grace_days:
+                              parameter_name_ami_id_map[ami["Name"]] = ami["Value"]
+                      LOGGER.info(f"The following AMI-IDs release date has crossed the Grace Period days: {parameter_name_ami_id_map}")
+                      asgs = get_asgs()
+                      image_path_asg_name_map = {}
+                      for asg in asgs:
+                          if "LaunchTemplate" in asg:
+                              asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
+                              if asg_image_path and asg_image_path in parameter_name_ami_id_map:
+                                  asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
+                                  instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
+                                  if len(instances_to_terminate) > 0:
+                                      image_path_asg_name_map[asg_image_path] = asg[ "AutoScalingGroupName"]
+                      LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
+                      LOGGER.info("Calculating % of ASGs for Staggered deployment")
+                      repave_today_count = ceil(len(asgs) * staggered_deploy / 100)
+                      if repave_today_count > len(image_path_asg_name_map):
+                          for asg in image_path_asg_name_map:
+                              msg = {"Task": "ASGRefresh", "ASGName": asg}
+                              LOGGER.info(f"Sending message to queue with message-body: {msg}")
+                              send_message_to_queue(queue_url, json.dumps(msg))
+                      else:
+                          for i in range(repave_today_count):
+                              msg = {"Task": "ASGRefresh", "ASGName": image_path_asg_name_map[i]}
+                              LOGGER.info(f"Sending message to queue with message-body: msg")
+                              send_message_to_queue(queue_url, json.dumps(msg))
+              except KeyError as ke:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with KeyError: {ke}")
+              except ClientError as ce:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with Client error: {ce}")
+              except BaseException as be:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with error: {be}")
+      Description: AMI Repave Lambda
+      FunctionName: AMIRepaveLambda
+      Handler: index.handler
+      MemorySize: 512
+      Environment:
+        Variables:
+          GracePeriodDays: 45
+          StaggeredDeploymentPercentage: 33
+          AsgSqsQueueUrl: !Ref RepaveSqs
+          MinimumHealthPercentage: 70
+      KmsKeyArn: !GetAtt AMIRepaveKMSKey.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.7
+      Timeout: 900
+  RepaveLambdaOne:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: 
+        ZipFile: |
+          from math import ceil
+          from os import environ
+          from datetime import datetime
+          import logging
+          import json
+          from botocore.exceptions import ClientError
+          import boto3
+          LOGGER = logging.getLogger(__name__)
+          LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
+          def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
+              client = boto3.client("ssm")
+              response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption)
+              return response["Parameters"]
+          def send_message_to_queue(queue_url, body):
+              client = boto3.client("sqs")
+              client.send_message_to_queue(QueueUrl=queue_url, MessageBody=body)
+          def delete_message_from_queue(queue_url, receipt_handle):
+              client = boto3.client("sqs")
+              client.detete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+          def terminate_instances(instance_ids):
+              client = boto3.client("ec2")
+              LOGGER.info("Terminating the following instances: %s",instance_ids)
+              client.terminate_instances(InstanceIds=instance_ids)
+          def get_asgs(asg_name=[]):
+              client = boto3.client("autoscaling")
+              all_asgs = []
+              response = client.describe_auto_scaling_groups(AutoScalingGroupNames=asg_name)
+              while True:
+                  all_asgs.extend(response["AutoScalingGroups"])
+                  if "NextToken" in response:
+                      response = client.describe_auto_scaling_groups(NextToken=response["NextToken"])
+                      all_asgs.extend(response["AutoScalingGroups"])
+                  else:
+                      break
+              return all_asgs
+          def is_lt_uses_ssm_parameter(lt_id, version):
+              client = boto3.client("ec2")
+              response = client.describe_launch_template_versions(LaunchTemplateId=lt_id, Versions=[version])
+              if ("resolve:ssm:"in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
+                  return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]
+          def get_asg_instances(asg_name):
+              client = boto3.client("autoscaling")
+              asg_instance_ids = []
+              response = client.describe_auto_scaling_instances()
+              while True:
+                  asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                  if "NextToken" in response:
+                      response = client.describe_auto_scaling_instances(NextToken=response["NextToken"])
+                      asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                  else:
+                      break
+              return asg_instance_ids
+          def get_asg_instances_to_terminate(instance_ids, ami_id):
+              client = boto3.client("ec2")
+              response = client.describe_instances(InstanceIds=instance_ids)
+              instances_to_terminate = [instance["InstanceId"] for instance in response["Reservations"][0]["Instances"] if instance["ImageId"] != ami_id]
+              return instances_to_terminate
+          def lambda_handler(event, context):
+              try:
+                  LOGGER.info("Received Event: %s", event)
+                  grace_days = environ.get("GracePeriodDays", 45)
+                  staggered_deploy = environ.get("StaggeredDeploymentPercentage", 33)
+                  queue_url = environ.get("AsgSqsQueueUrl")
+                  if ("source" in event) and (event["source"] == "aws.events"):
+                      ami_ids_path = environ.get("CitiAmiIdPath", "/cti/base/ami-ids/")
+                      ami_ids_info = get_ssm_parameters_by_path(ami_ids_path)
+                      parameter_name_ami_id_map = {}
+                      for ami in ami_ids_info:
+                          ami_release_date = ami["LastModifiedDate"]
+                          delta = datetime.utcnow() - ami_release_date.replace(tzinfo=None)
+                          if delta.days >= grace_days:
+                              parameter_name_ami_id_map[ami["Name"]] = ami["Value"]
+                      LOGGER.info(f"The following AMI-IDs release date has crossed the Grace Period days: {parameter_name_ami_id_map}")
+                      asgs = get_asgs()
+                      image_path_asg_name_map = {}
+                      for asg in asgs:
+                          if "LaunchTemplate" in asg:
+                              asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
+                              if asg_image_path and asg_image_path in parameter_name_ami_id_map:
+                                  asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
+                                  instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
+                                  if len(instances_to_terminate) > 0:
+                                      image_path_asg_name_map[asg_image_path] = asg[ "AutoScalingGroupName"]
+                      LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
+                      LOGGER.info("Calculating % of ASGs for Staggered deployment")
+                      repave_today_count = ceil(len(asgs) * staggered_deploy / 100)
+                      if repave_today_count > len(image_path_asg_name_map):
+                          for asg in image_path_asg_name_map:
+                              msg = {"Task": "ASGRefresh", "ASGName": asg}
+                              LOGGER.info(f"Sending message to queue with message-body: {msg}")
+                              send_message_to_queue(queue_url, json.dumps(msg))
+                      else:
+                          for i in range(repave_today_count):
+                              msg = {"Task": "ASGRefresh", "ASGName": image_path_asg_name_map[i]}
+                              LOGGER.info(f"Sending message to queue with message-body: msg")
+                              send_message_to_queue(queue_url, json.dumps(msg))
+              except KeyError as ke:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with KeyError: {ke}")
+              except ClientError as ce:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with Client error: {ce}")
+              except BaseException as be:
+                  LOGGER.error(f"AMI-Repave-Lambda: failed with error: {be}")
+      Description: AMI Repave Lambda
+      FunctionName: AMIRepaveLambda1
+      Handler: index.handler
+      MemorySize: 512
+      Environment:
+        Variables:
+          GracePeriodDays: 45
+          StaggeredDeploymentPercentage: 33
+          AsgSqsQueueUrl: !Ref RepaveSqs
+          MinimumHealthPercentage: 70
+      KmsKeyArn: !GetAtt AMIRepaveKMSKey.Arn
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.7
+      Timeout: 900

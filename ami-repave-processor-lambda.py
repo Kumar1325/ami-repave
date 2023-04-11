@@ -5,10 +5,8 @@ import logging
 import json
 from botocore.exceptions import ClientError
 import boto3
-
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
-
 def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
     client = boto3.client("ssm")
     response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption)
