@@ -4,42 +4,42 @@ Parameters:
     Type: String
     Description: RHEL Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   RHELPreviousAMI:
     Type: String
     Description: RHEL Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   EKSCurrentAMI:
     Type: String
     Description: EKS Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   EKSPreviousAMI:
     Type: String
     Description: EKS Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   LustreCurrentAMI:
     Type: String
     Description: Lustre Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   EKSPreviousAMI:
     Type: String
     Description: Lustre Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   ForensicCurrentAMI:
     Type: String
     Description: Forensic Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   ForensicPreviousAMI:
     Type: String
     Description: Forensic Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-03dd1011b2501fbfd
+    Default: ami-0103f211a154d64a6
   ReleaseDateRHELCurrentAMI:
     Type: String
     Description: ReleaseDate of RHEL Current AMI Id, allowed pattern YYYY-MM-DD.
@@ -96,6 +96,10 @@ Parameters:
     Type: String
     Description: DLQ for Lambda Queue
     Default: AMIRepaveLambdaQueue-DLQ
+  LambdaDLQName:
+    Type: String
+    Description: AMI-Repave Lambda DLQ Name
+    Default: Lambda-DLQ
 
 Resources:
   RHELCurrentAMIParameter:
@@ -104,7 +108,7 @@ Resources:
       DataType: aws:ec2:image
       Description: RHEL Current AMI ID
       AllowedPattern: "^ami-[a-z0-9]{17}$"
-      Name: /cti/ami/ami-ids/rhel-current
+      Name: /cti/base/ami-ids/rhel-current
       Type: String
       Value: 
         Ref: RHELCurrentAMI
@@ -166,6 +170,11 @@ Resources:
       QueueName: !Ref AMIRepaveDLQName
       VisibilityTimeout: 
         Ref: VisibilityTimeout
+  LambdaDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      KmsMasterKeyId: !Ref AMIRepaveKMSKey
+      QueueName: !Ref LambdaDLQName
   LambdaScheduler:
     Type: 'AWS::Events::Rule'
     Properties:
@@ -187,7 +196,7 @@ Resources:
       BatchSize: 1
       Enabled: true
       EventSourceArn: !GetAtt RepaveSqs.Arn
-      FunctionName: !GetAtt RepaveLambda.Arn
+      FunctionName: !GetAtt RefreshLambda.Arn
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -212,6 +221,15 @@ Resources:
               - logs:CreateLogStream
               - logs:PutLogEvents
               Resource: arn:aws:logs:*:*:*
+        - PolicyName: allowKMSDecrypt
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              Resource: !GetAtt AMIRepaveKMSKey.Arn
         - PolicyName: allowSSMActions
           PolicyDocument:
             Version: '2012-10-17'
@@ -228,6 +246,7 @@ Resources:
             Statement:
             - Effect: Allow
               Action:
+              - autoscaling:DescribeAutoScalingInstances
               - autoscaling:DescribeAutoScalingGroups
               - autoscaling:DescribeTags
               Resource: '*'
@@ -237,8 +256,10 @@ Resources:
             Statement:
             - Effect: Allow
               Action:
-              - ec2:DescribeIntances
-              - ec2:TerminateInstance
+              - ec2:DescribeInstances
+              - ec2:TerminateInstances
+              - ec2:DescribeTags
+              - ec2:DescribeLaunchTemplateVersions
               Resource: '*'
         - PolicyName: allowSqs
           PolicyDocument:
@@ -248,11 +269,13 @@ Resources:
               Action:
               - sqs:ReceiveMessage
               - sqs:DeleteMessage
+              - sqs:SendMessage
               - sqs:GetQueueAttributes
               - sqs:ChangeMessageVisibility
               Resource: 
               - !GetAtt RepaveSqs.Arn
               - !GetAtt RepaveDlqSqs.Arn
+              - !GetAtt LambdaDlq.Arn
   RepaveLambda:
     Type: AWS::Lambda::Function
     Properties:
@@ -273,14 +296,7 @@ Resources:
               return response["Parameters"]
           def send_message_to_queue(queue_url, body):
               client = boto3.client("sqs")
-              client.send_message_to_queue(QueueUrl=queue_url, MessageBody=body)
-          def delete_message_from_queue(queue_url, receipt_handle):
-              client = boto3.client("sqs")
-              client.detete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
-          def terminate_instances(instance_ids):
-              client = boto3.client("ec2")
-              LOGGER.info("Terminating the following instances: %s",instance_ids)
-              client.terminate_instances(InstanceIds=instance_ids)
+              client.send_message(QueueUrl=queue_url, MessageBody=body)
           def get_asgs(asg_name=[]):
               client = boto3.client("autoscaling")
               all_asgs = []
@@ -321,52 +337,52 @@ Resources:
                   grace_days = environ.get("GracePeriodDays", 45)
                   staggered_deploy = environ.get("StaggeredDeploymentPercentage", 33)
                   queue_url = environ.get("AsgSqsQueueUrl")
-                  if ("source" in event) and (event["source"] == "aws.events"):
-                      ami_ids_path = environ.get("CitiAmiIdPath", "/cti/base/ami-ids/")
-                      ami_ids_info = get_ssm_parameters_by_path(ami_ids_path)
-                      parameter_name_ami_id_map = {}
-                      for ami in ami_ids_info:
-                          ami_release_date = ami["LastModifiedDate"]
-                          delta = datetime.utcnow() - ami_release_date.replace(tzinfo=None)
-                          if delta.days >= grace_days:
-                              parameter_name_ami_id_map[ami["Name"]] = ami["Value"]
-                      LOGGER.info(f"The following AMI-IDs release date has crossed the Grace Period days: {parameter_name_ami_id_map}")
-                      asgs = get_asgs()
-                      image_path_asg_name_map = {}
-                      for asg in asgs:
-                          if "LaunchTemplate" in asg:
-                              asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
-                              if asg_image_path and asg_image_path in parameter_name_ami_id_map:
-                                  asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
-                                  instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
-                                  if len(instances_to_terminate) > 0:
-                                      image_path_asg_name_map[asg_image_path] = asg[ "AutoScalingGroupName"]
-                      LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
-                      LOGGER.info("Calculating % of ASGs for Staggered deployment")
-                      repave_today_count = ceil(len(asgs) * staggered_deploy / 100)
-                      if repave_today_count > len(image_path_asg_name_map):
-                          for asg in image_path_asg_name_map:
-                              msg = {"Task": "ASGRefresh", "ASGName": asg}
-                              LOGGER.info(f"Sending message to queue with message-body: {msg}")
-                              send_message_to_queue(queue_url, json.dumps(msg))
-                      else:
-                          for i in range(repave_today_count):
-                              msg = {"Task": "ASGRefresh", "ASGName": image_path_asg_name_map[i]}
-                              LOGGER.info(f"Sending message to queue with message-body: msg")
-                              send_message_to_queue(queue_url, json.dumps(msg))
+                  ami_ids_path = environ.get("CitiAmiIdPath", "/cti/ami/ami-ids/")
+                  ami_ids_info = get_ssm_parameters_by_path(ami_ids_path)
+                  parameter_name_ami_id_map = {}
+                  for ami in ami_ids_info:
+                      ami_release_date = ami["LastModifiedDate"]
+                      delta = datetime.utcnow() - ami_release_date.replace(tzinfo=None)
+                      if delta.days >= grace_days:
+                          parameter_name_ami_id_map[ami["Name"]] = ami["Value"]
+                  LOGGER.info(f"The following AMI-IDs release date has crossed the Grace Period days: {parameter_name_ami_id_map}")
+                  asgs = get_asgs()
+                  image_path_asg_name_map = {}
+                  for asg in asgs:
+                      if "LaunchTemplate" in asg:
+                          asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
+                          if asg_image_path and asg_image_path in parameter_name_ami_id_map:
+                              asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
+                              instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
+                              if len(instances_to_terminate) > 0:
+                                  image_path_asg_name_map[asg_image_path] = asg[ "AutoScalingGroupName"]
+                  LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
+                  LOGGER.info("Calculating % of ASGs for Staggered deployment")
+                  repave_today_count = ceil(len(asgs) * staggered_deploy / 100)
+                  if repave_today_count > len(image_path_asg_name_map):
+                      for asg in image_path_asg_name_map:
+                          msg = {"Task": "ASGRefresh", "ASGName": asg}
+                          LOGGER.info(f"Sending message to queue with message-body: {msg}")
+                          send_message_to_queue(queue_url, json.dumps(msg))
+                  else:
+                      for i in range(repave_today_count):
+                          msg = {"Task": "ASGRefresh", "ASGName": image_path_asg_name_map[i]}
+                          LOGGER.info(f"Sending message to queue with message-body: msg")
+                          send_message_to_queue(queue_url, json.dumps(msg))
               except KeyError as ke:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with KeyError: {ke}")
+                  LOGGER.error(f"KeyError: {ke}")
               except ClientError as ce:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with Client error: {ce}")
+                  LOGGER.error(f"Client-Error: {ce}")
               except BaseException as be:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with error: {be}")
+                  LOGGER.error(f"Base Error: {be}")
       Description: AMI Repave Lambda
       FunctionName: AMIRepaveLambda
-      Handler: index.handler
+      Handler: index.lambda_handler
       MemorySize: 512
       Environment:
         Variables:
-          GracePeriodDays: 45
+          LogLevel: DEBUG
+          GracePeriodDays: 0
           StaggeredDeploymentPercentage: 33
           AsgSqsQueueUrl: !Ref RepaveSqs
           MinimumHealthPercentage: 70
@@ -374,7 +390,9 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Runtime: python3.7
       Timeout: 900
-  RepaveLambdaOne:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDlq.Arn
+  RefreshLambda:
     Type: AWS::Lambda::Function
     Properties:
       Code: 
@@ -392,12 +410,16 @@ Resources:
               client = boto3.client("ssm")
               response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption)
               return response["Parameters"]
-          def send_message_to_queue(queue_url, body):
+          def get_ssm_parameter(parameter_name, with_decryption=True):
+              client = boto3.client("ssm")
+              response = client.get_parameter(Name=parameter_name, WithDecryption=with_decryption)
+              return response["Parameter"]
+          def send_message_to_queue(sqs_queue_url, message_body):
               client = boto3.client("sqs")
-              client.send_message_to_queue(QueueUrl=queue_url, MessageBody=body)
-          def delete_message_from_queue(queue_url, receipt_handle):
+              client.send_message(QueueUrl=sqs_queue_url, DelaySeconds=900, MessageBody=message_body)
+          def delete_message_from_queue(sqs_queue_url, receipt_handle):
               client = boto3.client("sqs")
-              client.detete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+              client.detete_message(QueueUrl=sqs_queue_url, ReceiptHandle=receipt_handle)
           def terminate_instances(instance_ids):
               client = boto3.client("ec2")
               LOGGER.info("Terminating the following instances: %s",instance_ids)
@@ -414,84 +436,79 @@ Resources:
                   else:
                       break
               return all_asgs
-          def is_lt_uses_ssm_parameter(lt_id, version):
+          def is_lt_uses_ssm_parameter(lt_id, version="$Default"):
               client = boto3.client("ec2")
               response = client.describe_launch_template_versions(LaunchTemplateId=lt_id, Versions=[version])
-              if ("resolve:ssm:"in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
+              if ("resolve:ssm:" in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
                   return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]
           def get_asg_instances(asg_name):
               client = boto3.client("autoscaling")
               asg_instance_ids = []
               response = client.describe_auto_scaling_instances()
               while True:
-                  asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                  asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if inst["AutoScalingGroupName"] == asg_name])
                   if "NextToken" in response:
                       response = client.describe_auto_scaling_instances(NextToken=response["NextToken"])
-                      asg_instance_ids.extend([inst["InstanceId"] for inst in response["AutoScalingInstances"] if inst["AutoScalingGroupName"] == asg_name])
+                      asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if inst["AutoScalingGroupName"] == asg_name])
                   else:
                       break
               return asg_instance_ids
           def get_asg_instances_to_terminate(instance_ids, ami_id):
               client = boto3.client("ec2")
               response = client.describe_instances(InstanceIds=instance_ids)
-              instances_to_terminate = [instance["InstanceId"] for instance in response["Reservations"][0]["Instances"] if instance["ImageId"] != ami_id]
+              instances_to_terminate = [instance["InstanceId"] for r in response["Reservations"] for instance in r['Instances'] if instance["ImageId"] != ami_id]
               return instances_to_terminate
           def lambda_handler(event, context):
               try:
-                  LOGGER.info("Received Event: %s", event)
-                  grace_days = environ.get("GracePeriodDays", 45)
-                  staggered_deploy = environ.get("StaggeredDeploymentPercentage", 33)
+                  record = json.loads(event["Records"][0]["body"])
+                  LOGGER.info("Received Message: %s", record)
+                  asg_name = record["ASGName"]
+                  min_health = environ.get("MinimumHealthPercentage", 70)
                   queue_url = environ.get("AsgSqsQueueUrl")
-                  if ("source" in event) and (event["source"] == "aws.events"):
-                      ami_ids_path = environ.get("CitiAmiIdPath", "/cti/base/ami-ids/")
-                      ami_ids_info = get_ssm_parameters_by_path(ami_ids_path)
-                      parameter_name_ami_id_map = {}
-                      for ami in ami_ids_info:
-                          ami_release_date = ami["LastModifiedDate"]
-                          delta = datetime.utcnow() - ami_release_date.replace(tzinfo=None)
-                          if delta.days >= grace_days:
-                              parameter_name_ami_id_map[ami["Name"]] = ami["Value"]
-                      LOGGER.info(f"The following AMI-IDs release date has crossed the Grace Period days: {parameter_name_ami_id_map}")
-                      asgs = get_asgs()
-                      image_path_asg_name_map = {}
-                      for asg in asgs:
-                          if "LaunchTemplate" in asg:
-                              asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
-                              if asg_image_path and asg_image_path in parameter_name_ami_id_map:
-                                  asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
-                                  instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
-                                  if len(instances_to_terminate) > 0:
-                                      image_path_asg_name_map[asg_image_path] = asg[ "AutoScalingGroupName"]
-                      LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
-                      LOGGER.info("Calculating % of ASGs for Staggered deployment")
-                      repave_today_count = ceil(len(asgs) * staggered_deploy / 100)
-                      if repave_today_count > len(image_path_asg_name_map):
-                          for asg in image_path_asg_name_map:
-                              msg = {"Task": "ASGRefresh", "ASGName": asg}
-                              LOGGER.info(f"Sending message to queue with message-body: {msg}")
-                              send_message_to_queue(queue_url, json.dumps(msg))
-                      else:
-                          for i in range(repave_today_count):
-                              msg = {"Task": "ASGRefresh", "ASGName": image_path_asg_name_map[i]}
-                              LOGGER.info(f"Sending message to queue with message-body: msg")
-                              send_message_to_queue(queue_url, json.dumps(msg))
+                  if record["Task"] == "ASGRefresh":
+                    asg_data = get_asgs(asg_name=[asg_name])
+                    asg_ssm_path = is_lt_uses_ssm_parameter(asg_data[0]["LaunchTemplate"]["LaunchTemplateId"],asg_data[0]["LaunchTemplate"]["Version"])
+                    if asg_ssm_path:
+                        asg_ami_id = get_ssm_parameter(asg_ssm_path.split(':')[2])["Value"]
+                        if asg_ami_id.startswith("ami-"):
+                            for tag in asg_data[0]["Tags"]:
+                                if "Key" in tag and tag["Key"]=="MinimumHealthPercentage":
+                                    min_health = tag["Value"]
+                            asg_instances = get_asg_instances(asg_name)
+                            instances_to_terminate = get_asg_instances_to_terminate(asg_instances, asg_ami_id)
+                            LOGGER.info(f"Total ASG #: {len(asg_instances)}, Intances to Terminate: {instances_to_terminate}, Length: {len(instances_to_terminate)}")
+                            if instances_to_terminate:
+                              LOGGER.info(f"Calculating percentage of ASG Instances to Terminate with MinimumHealthPercentage: {min_health}")
+                              instances_to_terminate_now = ceil(len(asg_instances) * int(min_health) / 100)
+                              LOGGER.info(f"Instances to Terminate Now: {instances_to_terminate_now}")
+                              if instances_to_terminate_now >= len(instances_to_terminate):
+                                  terminate_instances(instances_to_terminate)
+                              else:
+                                  terminate_instances(instances_to_terminate[:instances_to_terminate_now])
+                                  msg = {"Task": "ASGRefresh", "ASGName": asg_name}
+                                  LOGGER.info(f"Sending message to queue with message-body: {msg}")
+                                  send_message_to_queue(queue_url, json.dumps(msg))
+                        else:
+                            LOGGER.warn(f"ASG's SSM Parameter is not a valid AMI-ID: {asg_ami_id}")
+                    else:
+                        LOGGER.warn(f"ASG: {asg_name} LT not using SSM Parameter for AMI-ID")
               except KeyError as ke:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with KeyError: {ke}")
+                  LOGGER.error(f"KeyError: {ke}")
               except ClientError as ce:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with Client error: {ce}")
+                  LOGGER.error(f"Client error: {ce}")
               except BaseException as be:
-                  LOGGER.error(f"AMI-Repave-Lambda: failed with error: {be}")
-      Description: AMI Repave Lambda
-      FunctionName: AMIRepaveLambda1
-      Handler: index.handler
+                  LOGGER.error(f"Error: {be}")
+      Description: AMI Refresh Lambda
+      FunctionName: AMIRefreshLambda
+      Handler: index.lambda_handler
       MemorySize: 512
       Environment:
         Variables:
-          GracePeriodDays: 45
-          StaggeredDeploymentPercentage: 33
           AsgSqsQueueUrl: !Ref RepaveSqs
           MinimumHealthPercentage: 70
       KmsKeyArn: !GetAtt AMIRepaveKMSKey.Arn
       Role: !GetAtt LambdaExecutionRole.Arn
       Runtime: python3.7
       Timeout: 900
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDlq.Arn
