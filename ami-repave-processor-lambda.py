@@ -1,10 +1,10 @@
+import json
+import boto3
+import logging
 from math import ceil
 from os import environ
 from datetime import datetime
-import logging
-import json
 from botocore.exceptions import ClientError
-import boto3
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
 def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
@@ -19,10 +19,10 @@ def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=T
         else:
             break
     return parameters
-def send_message_to_queue(queue_url, body):
+def send_message_to_queue(queue_url, message_body):
     client = boto3.client("sqs")
-    LOGGER.info(f"Sending message to queue with message-body: {body}")
-    client.send_message(QueueUrl=queue_url, MessageBody=body)
+    LOGGER.info(f"Sending message to queue with message-body: {message_body}")
+    client.send_message(QueueUrl=queue_url, MessageBody=message_body)
 def get_asgs(asg_name=[]):
     client = boto3.client("autoscaling")
     all_asgs = []
@@ -39,7 +39,7 @@ def is_lt_uses_ssm_parameter(lt_id, version):
     client = boto3.client("ec2")
     response = client.describe_launch_template_versions(LaunchTemplateId=lt_id, Versions=[version])
     if ("resolve:ssm:"in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
-        return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]
+        return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"].split(':')[-1]
 def get_asg_instances(asg_name):
     client = boto3.client("autoscaling")
     asg_instance_ids = []

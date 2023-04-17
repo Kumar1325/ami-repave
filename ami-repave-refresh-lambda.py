@@ -1,9 +1,9 @@
+import json
+import boto3
+import logging
 from math import ceil
 from os import environ
-import logging
-import json
 from botocore.exceptions import ClientError
-import boto3
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
 def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
@@ -49,7 +49,7 @@ def is_lt_uses_ssm_parameter(lt_id, version="$Default"):
     client = boto3.client("ec2")
     response = client.describe_launch_template_versions(LaunchTemplateId=lt_id, Versions=[version])
     if ("resolve:ssm:" in response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]):
-        return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"]
+        return response["LaunchTemplateVersions"][0]["LaunchTemplateData"]["ImageId"].split(':')[-1]
 def get_asg_instances(asg_name):
     client = boto3.client("autoscaling")
     asg_instance_ids = []
@@ -72,28 +72,32 @@ def lambda_handler(event, context):
         record = json.loads(event['Records'][0]['body'].replace("\'",""))
         LOGGER.info(f"Received Message: {record}")
         asg_name = record["ASGName"]
+        refresh_run_count = int(record.get("ASGRefreshCount", 0))
         min_health = environ.get("MinimumHealthPercentage", 70)
         queue_url = environ.get("AsgSqsQueueUrl")
         if record["Task"] == "ASGRefresh":
             asg_data = get_asgs(asg_name=[asg_name])
             asg_ssm_path = is_lt_uses_ssm_parameter(asg_data[0]["LaunchTemplate"]["LaunchTemplateId"],asg_data[0]["LaunchTemplate"]["Version"])
             if asg_ssm_path:
-                asg_ami_id = get_ssm_parameter(asg_ssm_path.split(':')[2])["Value"]
+                asg_ami_id = get_ssm_parameter(asg_ssm_path)["Value"]
                 if asg_ami_id.startswith("ami-"):
                     for tag in asg_data[0]["Tags"]:
                         if "Key" in tag and tag["Key"]=="MinimumHealthPercentage":
                             min_health = tag["Value"]
                     asg_instances = get_asg_instances(asg_name)
                     instances_to_terminate = get_asg_instances_to_terminate(asg_instances, asg_ami_id)
-                    LOGGER.info(f"Total ASG #: {len(asg_instances)}, Intances to Terminate: {instances_to_terminate}, Length: {len(instances_to_terminate)}")
+                    LOGGER.info(f"Total ASG #: {len(asg_instances)}, Intances to Terminate: {instances_to_terminate}")
                     if instances_to_terminate:
                         LOGGER.info(f"Calculating percentage of ASG Instances to Terminate with MinimumHealthPercentage: {min_health}")
+                        min_health = 1 if int(min_health)==0 else min_health
                         instances_to_terminate_now = ceil(len(asg_instances) * int(min_health) / 100)
                         LOGGER.info(f"Instances to Terminate Now: {instances_to_terminate_now}")
                         if instances_to_terminate_now >= len(instances_to_terminate):
                             terminate_instances(instances_to_terminate)
                         else:
                             terminate_instances(instances_to_terminate[:instances_to_terminate_now])
+                            #time.sleep(60)
+                            #new_inst_ids = get_asg_new_inst_ids(asg_name)
                             msg = {"Task": "ASGRefresh", "ASGName": asg_name}
                             send_message_to_queue(queue_url, json.dumps(msg))
                 else:
