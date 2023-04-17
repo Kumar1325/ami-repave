@@ -1,6 +1,5 @@
 from math import ceil
 from os import environ
-from datetime import datetime
 import logging
 import json
 from botocore.exceptions import ClientError
@@ -9,8 +8,16 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.getLevelName(environ.get("LogLevel", "DEBUG")))
 def get_ssm_parameters_by_path(parameter_path, recursive=True, with_decryption=True):
     client = boto3.client("ssm")
+    parameters = []
     response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption)
-    return response["Parameters"]
+    while True:
+        parameters.extend(response["Parameters"])
+        if "NextToken" in response:
+            response = client.get_parameters_by_path(Path=parameter_path, Recursive=recursive, WithDecryption=with_decryption, NextToken=response["NextToken"])
+            parameters.extend(response["Parameters"])
+        else:
+            break
+    return parameters
 def get_ssm_parameter(parameter_name, with_decryption=True):
     client = boto3.client("ssm")
     response = client.get_parameter(Name=parameter_name, WithDecryption=with_decryption)
