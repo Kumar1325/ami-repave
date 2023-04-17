@@ -24,6 +24,7 @@ def get_ssm_parameter(parameter_name, with_decryption=True):
     return response["Parameter"]
 def send_message_to_queue(sqs_queue_url, message_body):
     client = boto3.client("sqs")
+    LOGGER.info(f"Sending message to queue with message-body: {body}")
     client.send_message(QueueUrl=sqs_queue_url, DelaySeconds=900, MessageBody=message_body)
 def delete_message_from_queue(sqs_queue_url, receipt_handle):
     client = boto3.client("sqs")
@@ -94,7 +95,6 @@ def lambda_handler(event, context):
                         else:
                             terminate_instances(instances_to_terminate[:instances_to_terminate_now])
                             msg = {"Task": "ASGRefresh", "ASGName": asg_name}
-                            LOGGER.info(f"Sending message to queue with message-body: {msg}")
                             send_message_to_queue(queue_url, json.dumps(msg))
                 else:
                     LOGGER.warn(f"ASG's SSM Parameter is not a valid AMI-ID: {asg_ami_id}")
