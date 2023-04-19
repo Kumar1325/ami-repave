@@ -4,42 +4,42 @@ Parameters:
     Type: String
     Description: RHEL Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   RHELPreviousAMI:
     Type: String
     Description: RHEL Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   EKSCurrentAMI:
     Type: String
     Description: EKS Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   EKSPreviousAMI:
     Type: String
     Description: EKS Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   LustreCurrentAMI:
     Type: String
     Description: Lustre Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   LustrePreviousAMI:
     Type: String
     Description: Lustre Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   ForensicCurrentAMI:
     Type: String
     Description: Forensic Current AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   ForensicPreviousAMI:
     Type: String
     Description: Forensic Previous AMI Id
     AllowedPattern: "^ami-[a-z0-9]{17}$"
-    Default: ami-0103f211a154d64a6
+    Default: ami-0d3d680b1e0db7721
   ReleaseDateRHELCurrentAMI:
     Type: String
     Description: ReleaseDate of RHEL Current AMI Id, allowed pattern YYYY-MM-DD.
