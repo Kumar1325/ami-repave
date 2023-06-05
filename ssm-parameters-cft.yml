@@ -1,0 +1,32 @@
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  rhel79:
+    Type: String
+    Description: RHEL 7.9 Current AMI Id
+    AllowedPattern: "^ami-[a-z0-9]{17}$"
+    Default: ami-0d3d680b1e0db7721
+  rhel79ReleaseDate:
+    Type: String
+    Description: ReleaseDate of RHEL Current AMI Id, allowed pattern YYYY-MM-DD.
+    AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+    Default: "2023-04-07"
+Resources:
+  rhel79Parameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      DataType: aws:ec2:image
+      Description: RHEL Current AMI ID
+      AllowedPattern: "^ami-[a-z0-9]{17}$"
+      Name: /citi/ami/ami-ids/citi-rhel7.9-base
+      Type: String
+      Value: 
+        Ref: rhel79
+  rhel79ReleaseDateParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: RHEL 7.9 Current AMI ID Release Date
+      AllowedPattern: "^202[3-9]-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+      Name: /citi/ami/release-dates/citi-rhel7.9-base
+      Type: String
+      Value: 
+        Ref: rhel79ReleaseDate

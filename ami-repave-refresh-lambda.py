@@ -24,15 +24,13 @@ def get_ssm_parameter(parameter_name, with_decryption=True):
     return response["Parameter"]
 def send_message_to_queue(sqs_queue_url, message_body):
     client = boto3.client("sqs")
-    LOGGER.info(f"Sending message to queue with message-body: {body}")
+    LOGGER.info(f"Sending message to queue with message-body: {message_body}")
     client.send_message(QueueUrl=sqs_queue_url, DelaySeconds=900, MessageBody=message_body)
-def delete_message_from_queue(sqs_queue_url, receipt_handle):
-    client = boto3.client("sqs")
-    client.detete_message(QueueUrl=sqs_queue_url, ReceiptHandle=receipt_handle)
 def terminate_instances(instance_ids):
-    client = boto3.client("ec2")
-    LOGGER.info("Terminating the following instances: %s",instance_ids)
-    client.terminate_instances(InstanceIds=instance_ids)
+    client = boto3.client("autoscaling")
+    for inst in instance_ids:
+        LOGGER.info(f"Terminating the Instance: {inst}")
+        client.terminate_instance_in_auto_scaling_group(InstanceId=inst, ShouldDecrementDesiredCapacity=False)
 def get_asgs(asg_name=[]):
     client = boto3.client("autoscaling")
     all_asgs = []
@@ -55,10 +53,10 @@ def get_asg_instances(asg_name):
     asg_instance_ids = []
     response = client.describe_auto_scaling_instances()
     while True:
-        asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if inst["AutoScalingGroupName"] == asg_name])
+        asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if (inst["AutoScalingGroupName"] == asg_name and inst["HealthStatus"].lower()=="healthy")])
         if "NextToken" in response:
             response = client.describe_auto_scaling_instances(NextToken=response["NextToken"])
-            asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if inst["AutoScalingGroupName"] == asg_name])
+            asg_instance_ids.extend([inst["InstanceId"]for inst in response["AutoScalingInstances"]if (inst["AutoScalingGroupName"] == asg_name and inst["HealthStatus"].lower()=="healthy")])
         else:
             break
     return asg_instance_ids
@@ -72,9 +70,8 @@ def lambda_handler(event, context):
         record = json.loads(event['Records'][0]['body'].replace("\'",""))
         LOGGER.info(f"Received Message: {record}")
         asg_name = record["ASGName"]
-        refresh_run_count = int(record.get("ASGRefreshCount", 0))
         min_health = environ.get("MinimumHealthPercentage", 70)
-        queue_url = environ.get("AsgSqsQueueUrl")
+        queue_url = environ.get("RepaveSqsQueueUrl")
         if record["Task"] == "ASGRefresh":
             asg_data = get_asgs(asg_name=[asg_name])
             asg_ssm_path = is_lt_uses_ssm_parameter(asg_data[0]["LaunchTemplate"]["LaunchTemplateId"],asg_data[0]["LaunchTemplate"]["Version"])
@@ -85,21 +82,24 @@ def lambda_handler(event, context):
                         if "Key" in tag and tag["Key"]=="MinimumHealthPercentage":
                             min_health = tag["Value"]
                     asg_instances = get_asg_instances(asg_name)
-                    instances_to_terminate = get_asg_instances_to_terminate(asg_instances, asg_ami_id)
-                    LOGGER.info(f"Total ASG #: {len(asg_instances)}, Intances to Terminate: {instances_to_terminate}")
-                    if instances_to_terminate:
-                        LOGGER.info(f"Calculating percentage of ASG Instances to Terminate with MinimumHealthPercentage: {min_health}")
-                        min_health = 1 if int(min_health)==0 else min_health
-                        instances_to_terminate_now = ceil(len(asg_instances) * int(min_health) / 100)
-                        LOGGER.info(f"Instances to Terminate Now: {instances_to_terminate_now}")
-                        if instances_to_terminate_now >= len(instances_to_terminate):
-                            terminate_instances(instances_to_terminate)
-                        else:
-                            terminate_instances(instances_to_terminate[:instances_to_terminate_now])
-                            #time.sleep(60)
-                            #new_inst_ids = get_asg_new_inst_ids(asg_name)
-                            msg = {"Task": "ASGRefresh", "ASGName": asg_name}
-                            send_message_to_queue(queue_url, json.dumps(msg))
+                    if len(asg_instances)==asg_data[0]["DesiredCapacity"]:
+                        instances_to_terminate = get_asg_instances_to_terminate(asg_instances, asg_ami_id)
+                        LOGGER.info(f"Total ASG #: {len(asg_instances)}, Intances to Terminate: {instances_to_terminate}")
+                        if instances_to_terminate:
+                            LOGGER.info(f"Calculating percentage of ASG Instances to Terminate with MinimumHealthPercentage: {min_health}")
+                            min_health = 1 if int(min_health)==0 else min_health
+                            instances_to_terminate_now = ceil(len(asg_instances) * int(min_health) / 100)
+                            LOGGER.info(f"Instances to Terminate Now: {instances_to_terminate_now}")
+                            if instances_to_terminate_now >= len(instances_to_terminate):
+                                terminate_instances(instances_to_terminate)
+                            else:
+                                terminate_instances(instances_to_terminate[:instances_to_terminate_now])
+                                msg = {"Task": "ASGRefresh", "ASGName": asg_name}
+                                send_message_to_queue(queue_url, json.dumps(msg))
+                    else:
+                        LOGGER.info(f"No.of ASG running instances({len(asg_instances)}) are not equal to Desired-Capacity({asg_data[0]['DesiredCapacity']}) of ASG: {asg_name}")
+                        msg = {"Task": "ASGRefresh", "ASGName": asg_name}
+                        send_message_to_queue(queue_url, json.dumps(msg))
                 else:
                     LOGGER.warn(f"ASG's SSM Parameter is not a valid AMI-ID: {asg_ami_id}")
             else:

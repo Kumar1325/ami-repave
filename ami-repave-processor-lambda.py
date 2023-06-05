@@ -62,7 +62,7 @@ def lambda_handler(event, context):
         LOGGER.info("Received Event: %s", event)
         grace_days = environ.get("GracePeriodDays", 45)
         staggered_deploy = environ.get("StaggeredDeploymentPercentage", 33)
-        queue_url = environ.get("AsgSqsQueueUrl")
+        queue_url = environ.get("RepaveSqsQueueUrl")
         ami_ids_info = get_ssm_parameters_by_path(environ.get("CitiAmiIdPath", "/cti/ami/ami-ids/"))
         release_dates_info = get_ssm_parameters_by_path(environ.get("CitiAmiReleaseDatePath", "/cti/ami/release-dates/"))
         ami_map = {item["Name"]:item["Value"] for item in ami_ids_info}
@@ -84,9 +84,10 @@ def lambda_handler(event, context):
                 asg_image_path = is_lt_uses_ssm_parameter(asg["LaunchTemplate"]["LaunchTemplateId"],asg["LaunchTemplate"]["Version"])
                 if asg_image_path and asg_image_path in parameter_name_ami_id_map:
                     asg_instances = get_asg_instances(asg["AutoScalingGroupName"])
-                    instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
-                    if len(instances_to_terminate) > 0:
-                        image_path_asg_name_map[asg[ "AutoScalingGroupName"]] = asg_image_path
+                    if asg_instances:
+                        instances_to_terminate = get_asg_instances_to_terminate(asg_instances, parameter_name_ami_id_map[asg_image_path])
+                        if len(instances_to_terminate) > 0:
+                            image_path_asg_name_map[asg[ "AutoScalingGroupName"]] = asg_image_path
         LOGGER.info(f"ASG to Repave: {image_path_asg_name_map}")
         LOGGER.info(f"Calculating % of ASGs with Staggered deployment %: {staggered_deploy}")
         repave_today_count = ceil(len(asgs) * int(staggered_deploy) / 100)
